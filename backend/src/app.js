@@ -50,7 +50,7 @@ app.get("/stations", async (req, res) => {
 
 // Route search endpoint
 app.get("/search", async (req, res) => {
-    const { source, destination, mode } = req.query;
+    const { source, destination, mode, date, deadline } = req.query;
     if (!source || !destination) {
         return res.status(400).json({ error: "Source and destination stations are required" });
     }
@@ -60,7 +60,9 @@ app.get("/search", async (req, res) => {
         const response = await axios.post(`${PYTHON_SERVICE_URL}/search`, {
             source: source.toUpperCase().trim(),
             destination: destination.toUpperCase().trim(),
-            mode: mode || "time"
+            mode: mode || "time",
+            date: date || null,
+            deadline: deadline || null
         });
         res.json({ routes: response.data });
     } catch (err) {

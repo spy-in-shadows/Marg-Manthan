@@ -31,6 +31,11 @@ export default function Home() {
   const [showDestSuggestions, setShowDestSuggestions] = useState(false);
 
   const [mode, setMode] = useState("time");
+  const [journeyDate, setJourneyDate] = useState(() => {
+    const today = new Date();
+    return today.toISOString().split("T")[0];
+  });
+  const [arrivalDeadline, setArrivalDeadline] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const sourceRef = useRef<HTMLDivElement>(null);
@@ -136,7 +141,7 @@ export default function Home() {
       return;
     }
 
-    navigate(`/results?source=${sourceCode}&destination=${destCode}&mode=${mode}`);
+    navigate(`/results?source=${sourceCode}&destination=${destCode}&mode=${mode}&date=${journeyDate}&deadline=${arrivalDeadline}`);
   };
 
   const selectPopular = (station: Station, type: "source" | "dest") => {
@@ -270,6 +275,36 @@ export default function Home() {
                 ))}
               </div>
             )}
+          </div>
+        </div>
+
+        {/* Date and Deadline Constraints */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+          <div>
+            <label className="block text-[11px] text-gray-400 font-bold uppercase tracking-wider mb-2 px-1">
+              Journey Date
+            </label>
+            <input
+              type="date"
+              value={journeyDate}
+              min={new Date().toISOString().split("T")[0]}
+              onChange={(e) => setJourneyDate(e.target.value)}
+              className="w-full glass-input px-4 py-3 rounded-xl text-sm font-bold text-white focus:outline-none transition-all cursor-pointer"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-[11px] text-gray-400 font-bold uppercase tracking-wider mb-2 px-1">
+              Latest Arrival Deadline (Optional)
+            </label>
+            <input
+              type="datetime-local"
+              value={arrivalDeadline}
+              min={new Date().toISOString().substring(0, 16)}
+              onChange={(e) => setArrivalDeadline(e.target.value)}
+              className="w-full glass-input px-4 py-3 rounded-xl text-sm font-bold text-white focus:outline-none transition-all cursor-pointer"
+            />
           </div>
         </div>
 

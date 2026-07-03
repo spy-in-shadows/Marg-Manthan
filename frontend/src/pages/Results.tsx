@@ -12,6 +12,8 @@ interface TrainSegment {
   arrival_time: string;
   distance: number;
   travel_time: number;
+  departure_date?: string;
+  arrival_date?: string;
 }
 
 interface Route {
@@ -28,6 +30,8 @@ export default function Results() {
   const source = searchParams.get("source") || "";
   const destination = searchParams.get("destination") || "";
   const initialMode = searchParams.get("mode") || "time";
+  const date = searchParams.get("date") || "";
+  const deadline = searchParams.get("deadline") || "";
 
   const [routes, setRoutes] = useState<Route[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,7 +50,7 @@ export default function Results() {
       setError(null);
       try {
         const response = await axios.get(
-          `http://localhost:3000/search?source=${source}&destination=${destination}&mode=${initialMode}`
+          `http://localhost:3000/search?source=${source}&destination=${destination}&mode=${initialMode}&date=${date}&deadline=${deadline}`
         );
         setRoutes(response.data.routes || []);
         
@@ -130,9 +134,21 @@ export default function Results() {
       {/* Route Info Banner */}
       <div className="glass-panel p-6 rounded-2xl border border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/10 mb-1">
-            ROUTE PLAN
-          </span>
+          <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/10">
+              ROUTE PLAN
+            </span>
+            {date && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/5 text-gray-300 border border-white/5">
+                Date: {date}
+              </span>
+            )}
+            {deadline && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-500/10 text-red-400 border border-red-500/10">
+                Deadline: {new Date(deadline).toLocaleString()}
+              </span>
+            )}
+          </div>
           <h1 className="text-xl sm:text-2xl font-black text-white flex items-center gap-2">
             <Link to={`/station/${source}`} className="hover:text-blue-400 transition-colors">
               {source}
@@ -321,15 +337,22 @@ export default function Results() {
                       // Calculate transit wait time for transfer
                       let waitTime = 0;
                       if (nextSeg) {
-                        const arr = seg.arrival_time;
-                        const dep = nextSeg.departure_time;
-                        // wait time calculation
-                        const [ah, am] = arr.split(":").map(Number);
-                        const [dh, dm] = dep.split(":").map(Number);
-                        let aMin = ah * 60 + am;
-                        let dMin = dh * 60 + dm;
-                        if (dMin < aMin) dMin += 1440; // overnight
-                        waitTime = dMin - aMin;
+                        if (seg.arrival_date && nextSeg.departure_date) {
+                          const arrStr = `${seg.arrival_date}T${seg.arrival_time}`;
+                          const depStr = `${nextSeg.departure_date}T${nextSeg.departure_time}`;
+                          const arr = new Date(arrStr);
+                          const dep = new Date(depStr);
+                          waitTime = Math.round((dep.getTime() - arr.getTime()) / 60000);
+                        } else {
+                          const arr = seg.arrival_time;
+                          const dep = nextSeg.departure_time;
+                          const [ah, am] = arr.split(":").map(Number);
+                          const [dh, dm] = dep.split(":").map(Number);
+                          let aMin = ah * 60 + am;
+                          let dMin = dh * 60 + dm;
+                          if (dMin < aMin) dMin += 1440; // overnight
+                          waitTime = dMin - aMin;
+                        }
                       }
 
                       return (
@@ -359,7 +382,10 @@ export default function Results() {
                                 <Link to={`/station/${seg.from_station}`} className="text-sm font-bold text-white hover:text-blue-400 transition-colors">
                                   {seg.from_station}
                                 </Link>
-                                <span className="block text-[10px] text-gray-400 font-semibold mt-0.5">Departs {seg.departure_time.substring(0, 5)}</span>
+                                <span className="block text-[10px] text-gray-400 font-semibold mt-0.5">
+                                  Departs {seg.departure_time.substring(0, 5)}
+                                  {seg.departure_date && <span className="text-gray-500 font-medium ml-1">({seg.departure_date})</span>}
+                                </span>
                               </div>
 
                               <div className="flex flex-col items-center">
@@ -371,7 +397,10 @@ export default function Results() {
                                 <Link to={`/station/${seg.to_station}`} className="text-sm font-bold text-white hover:text-blue-400 transition-colors">
                                   {seg.to_station}
                                 </Link>
-                                <span className="block text-[10px] text-gray-400 font-semibold mt-0.5">Arrives {seg.arrival_time.substring(0, 5)}</span>
+                                <span className="block text-[10px] text-gray-400 font-semibold mt-0.5">
+                                  Arrives {seg.arrival_time.substring(0, 5)}
+                                  {seg.arrival_date && <span className="text-gray-500 font-medium ml-1">({seg.arrival_date})</span>}
+                                </span>
                               </div>
                             </div>
                           </div>

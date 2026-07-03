@@ -73,7 +73,7 @@ class RouteSearcher:
                 
         return t
     
-    def find_direct_trains(self, source: str, destination: str) -> List[Dict]:
+    def find_direct_trains(self, source: str, destination: str, journey_date: datetime.date, deadline: Optional[datetime] = None) -> List[Dict]:
         """Find direct trains between two stations using the timetable index."""
         if source not in self.station_index or destination not in self.station_index:
             return []
@@ -92,6 +92,18 @@ class RouteSearcher:
                     distance = stop_dest['distance'] - stop_src['distance']
                     travel_time = self._calculate_time_diff(stop_src['departure_time'], stop_dest['arrival_time'], distance)
                     
+                    # Parse departure time to build absolute departure datetime
+                    dep_parts = stop_src['departure_time'].split(':')
+                    dep_hours = int(dep_parts[0])
+                    dep_minutes = int(dep_parts[1])
+                    
+                    dep_datetime = datetime(journey_date.year, journey_date.month, journey_date.day, dep_hours, dep_minutes)
+                    arr_datetime = dep_datetime + timedelta(minutes=travel_time)
+                    
+                    # Check deadline constraint
+                    if deadline and arr_datetime > deadline:
+                        break  # Arrives too late, skip this route
+                    
                     direct_routes.append({
                         'type': 'direct',
                         'trains': [{
@@ -102,50 +114,54 @@ class RouteSearcher:
                             'departure_time': stop_src['departure_time'],
                             'arrival_time': stop_dest['arrival_time'],
                             'distance': int(distance),
-                            'travel_time': int(travel_time)
+                            'travel_time': int(travel_time),
+                            'departure_date': dep_datetime.strftime("%Y-%m-%d"),
+                            'arrival_date': arr_datetime.strftime("%Y-%m-%d")
                         }],
                         'total_distance': int(distance),
                         'total_time': int(travel_time),
                         'changes': 0,
                         'waiting_time': 0
                     })
-                    break  # Found destination on this train, proceed to next train
+                    break  # Found destination, proceed to next train
                     
         return direct_routes
     
-    def find_routes_connecting(self, source: str, destination: str, mode: str = 'time', max_routes: int = 5) -> List[Dict]:
-        """Find connecting routes using Dijkstra's search over train legs."""
+    def find_routes_connecting(self, source: str, destination: str, mode: str, journey_date: datetime.date, deadline: Optional[datetime] = None, max_routes: int = 5) -> List[Dict]:
+        """Find connecting routes using Dijkstra's search over train legs with absolute datetimes."""
         if source not in self.station_index or destination not in self.station_index:
             return []
             
-        # Priority queue stores: (cost, current_station, last_train, last_arrival_time, path)
+        # Start datetime is midnight of the journey date
+        start_datetime = datetime(journey_date.year, journey_date.month, journey_date.day, 0, 0)
+        
+        # Priority queue stores: (cost, counter, current_station, last_train, current_datetime, path)
         counter = 0
-        pq = [(0, counter, source, None, None, [])]
+        pq = [(0, counter, source, None, start_datetime, [])]
         
         routes = []
         pop_count = {}
         
         while pq and len(routes) < max_routes:
-            cost, _, u, last_train, last_arr_time, path = heapq.heappop(pq)
+            cost, _, u, last_train, current_datetime, path = heapq.heappop(pq)
             
             if u == destination:
                 # Skip direct routes in connecting search
                 if len(path) <= 1:
                     continue
-                # Reconstruct stats
+                    
                 total_distance = sum(leg['distance'] for leg in path)
                 waiting_time = 0
                 for i in range(1, len(path)):
-                    waiting = self._calculate_waiting_time(
-                        path[i-1]['arrival_time'],
-                        path[i]['departure_time']
-                    )
-                    waiting_time += waiting
+                    # Parse leg dates to calculate correct layover wait times
+                    dep = datetime.strptime(path[i]['departure_date'] + " " + path[i]['departure_time'], "%Y-%m-%d %H:%M:%S")
+                    arr = datetime.strptime(path[i-1]['arrival_date'] + " " + path[i-1]['arrival_time'], "%Y-%m-%d %H:%M:%S")
+                    waiting_time += int((dep - arr).total_seconds() / 60)
                 
                 # total_time is sum of travel times + waiting times
                 total_time = sum(leg['travel_time'] for leg in path) + waiting_time
                 
-                # Check for duplicate route (same sequence of train numbers)
+                # Check for duplicate route (same train sequence)
                 is_duplicate = False
                 for r in routes:
                     if [leg['train_no'] for leg in r['trains']] == [leg['train_no'] for leg in path]:
@@ -184,15 +200,27 @@ class RouteSearcher:
                 stops = self.train_timetable[t_no]
                 stop_u = stops[idx_u]
                 
-                # Connection logic (waiting time + transfer penalty)
-                waiting_time = 0
-                penalty = 0
-                if last_train is not None:
-                    waiting_time = self._calculate_time_diff(last_arr_time, stop_u['departure_time'])
-                    # Connection must be feasible: at least 15 min wait, at most 18 hours
-                    if waiting_time < 15 or waiting_time > 1080:
+                # Compute absolute departure datetime at station u
+                dep_parts = stop_u['departure_time'].split(':')
+                dep_hours = int(dep_parts[0])
+                dep_minutes = int(dep_parts[1])
+                
+                # If last_train is None: first train departure is on the journey_date
+                if last_train is None:
+                    dep_datetime = datetime(journey_date.year, journey_date.month, journey_date.day, dep_hours, dep_minutes)
+                    waiting_time = 0
+                    penalty = 0
+                else:
+                    # Connection logic: find next departure after current_datetime
+                    dep_datetime = datetime(current_datetime.year, current_datetime.month, current_datetime.day, dep_hours, dep_minutes)
+                    # Connection must have at least a 15-minute wait buffer. If not, it's the next day's run.
+                    if dep_datetime < current_datetime + timedelta(minutes=15):
+                        dep_datetime += timedelta(days=1)
+                    
+                    waiting_time = int((dep_datetime - current_datetime).total_seconds() / 60)
+                    if waiting_time > 1080:  # Max 18 hours layout wait
                         continue
-                    penalty = 45  # 45 minutes transfer penalty for route cost calculations
+                    penalty = 45  # 45 minutes transfer penalty for routing cost calculation
                 
                 # Explore all subsequent stops on train t_no
                 for j in range(idx_u + 1, len(stops)):
@@ -207,7 +235,12 @@ class RouteSearcher:
                         continue
                         
                     travel_time = self._calculate_time_diff(stop_u['departure_time'], stop_v['arrival_time'], distance)
+                    arrival_datetime = dep_datetime + timedelta(minutes=travel_time)
                     
+                    # Deadline constraint check
+                    if deadline and arrival_datetime > deadline:
+                        continue
+                        
                     new_leg = {
                         'train_no': int(t_no),
                         'train_name': stop_u['train_name'],
@@ -216,7 +249,9 @@ class RouteSearcher:
                         'departure_time': stop_u['departure_time'],
                         'arrival_time': stop_v['arrival_time'],
                         'distance': int(distance),
-                        'travel_time': int(travel_time)
+                        'travel_time': int(travel_time),
+                        'departure_date': dep_datetime.strftime("%Y-%m-%d"),
+                        'arrival_date': arrival_datetime.strftime("%Y-%m-%d")
                     }
                     
                     # Compute new priority cost based on mode
@@ -230,20 +265,41 @@ class RouteSearcher:
                         new_cost = cost + travel_time + waiting_time + penalty
                         
                     counter += 1
-                    heapq.heappush(pq, (new_cost, counter, v, t_no, stop_v['arrival_time'], path + [new_leg]))
+                    heapq.heappush(pq, (new_cost, counter, v, t_no, arrival_datetime, path + [new_leg]))
                     
         return routes
     
-    def search(self, source: str, destination: str, mode: str = 'time') -> List[Dict]:
-        """Main search method that routes to appropriate algorithm and sorts output."""
+    def search(self, source: str, destination: str, mode: str = 'time', date: str = None, deadline: str = None) -> List[Dict]:
+        """Main search method that routes to appropriate algorithm, validates constraints, and sorts output."""
+        # Default date to today if none is provided
+        if not date:
+            journey_date = datetime.now().date()
+        else:
+            try:
+                journey_date = datetime.strptime(date, "%Y-%m-%d").date()
+            except:
+                journey_date = datetime.now().date()
+                
+        # Parse deadline if provided
+        parsed_deadline = None
+        if deadline:
+            try:
+                if 'T' in deadline:
+                    parsed_deadline = datetime.strptime(deadline.split('.')[0], "%Y-%m-%dT%H:%M:%S") if len(deadline.split('T')[1]) > 5 else datetime.strptime(deadline, "%Y-%m-%dT%H:%M")
+                else:
+                    parsed_deadline = datetime.strptime(deadline, "%Y-%m-%d %H:%M:%S")
+            except Exception as e:
+                print("Failed to parse deadline:", deadline, e)
+                parsed_deadline = None
+                
         # Find direct trains
-        direct_routes = self.find_direct_trains(source, destination)
+        direct_routes = self.find_direct_trains(source, destination, journey_date, parsed_deadline)
         
         if mode == 'direct':
             return direct_routes
             
         # Find connecting routes
-        connecting_routes = self.find_routes_connecting(source, destination, mode, max_routes=5)
+        connecting_routes = self.find_routes_connecting(source, destination, mode, journey_date, parsed_deadline, max_routes=5)
         
         all_routes = direct_routes + connecting_routes
         

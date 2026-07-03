@@ -41,6 +41,8 @@ class RouteRequest(BaseModel):
     source: str
     destination: str
     mode: str = "time"  # Options: time, distance, changes, direct
+    date: Optional[str] = None
+    deadline: Optional[str] = None
 
 
 class StationInfo(BaseModel):
@@ -57,6 +59,8 @@ class TrainSegment(BaseModel):
     arrival_time: str
     distance: int
     travel_time: int
+    departure_date: Optional[str] = None
+    arrival_date: Optional[str] = None
 
 
 class Route(BaseModel):
@@ -141,7 +145,7 @@ async def search_routes(request: RouteRequest):
         raise HTTPException(status_code=400, detail=f"Invalid mode. Must be one of: {valid_modes}")
     
     try:
-        routes = route_searcher.search(request.source, request.destination, request.mode)
+        routes = route_searcher.search(request.source, request.destination, request.mode, request.date, request.deadline)
         return routes
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error searching routes: {str(e)}")
