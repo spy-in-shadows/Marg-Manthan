@@ -144,14 +144,6 @@ export default function Navbar({ theme, toggleTheme }: NavbarProps) {
             <Link to="/about" className={isActive("/about")}>
               About Marg-Manthan
             </Link>
-            <span className="text-slate-500 hidden sm:inline">|</span>
-            <span className="hidden sm:inline text-gray-300/80 cursor-pointer hover:text-orange-400 transition-colors">
-              Trains Schedule
-            </span>
-            <span className="text-slate-500 hidden md:inline">|</span>
-            <span className="hidden md:inline text-gray-300/80 cursor-pointer hover:text-orange-400 transition-colors">
-              Pnr Status
-            </span>
           </div>
 
           <div className="flex items-center gap-3">

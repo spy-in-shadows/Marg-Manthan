@@ -162,16 +162,6 @@ export default function Home() {
         
         {/* LEFT COLUMN: BOOK TICKET CARD (lg:col-span-5) */}
         <div className="lg:col-span-5 flex flex-col rounded-2xl overflow-hidden shadow-2xl border border-gray-200 dark:border-white/5 bg-white dark:bg-[#131926]/90">
-          {/* Mock Tabs */}
-          <div className="flex w-full bg-[#213d77]">
-            <div className="flex-1 bg-[#0f2954] text-white py-3 text-center text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 border-r border-[#1e3a8a]">
-              <span>📋</span> PNR Status
-            </div>
-            <div className="flex-1 bg-[#213d77] text-white/80 py-3 text-center text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer hover:bg-[#1a3263] transition-colors">
-              <span>📊</span> Charts / Vacancy
-            </div>
-          </div>
-
           {/* The Search Form */}
           <form
             onSubmit={handleSearch}
