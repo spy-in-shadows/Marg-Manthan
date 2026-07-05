@@ -59,6 +59,34 @@ export default function Results() {
   // Expanded card tracking
   const [expandedCards, setExpandedCards] = useState<{ [key: number]: boolean }>({});
 
+  // Booking modal states
+  const [bookingModalOpen, setBookingModalOpen] = useState(false);
+  const [bookingRoute, setBookingRoute] = useState<Route | null>(null);
+  const [bookingRouteIdx, setBookingRouteIdx] = useState<number | null>(null);
+  const [copiedText, setCopiedText] = useState<string | null>(null);
+
+  const handleBookNow = (route: Route, rIdx: number) => {
+    if (route.trains.length === 1) {
+      // Direct train: open IRCTC search results list directly in a new tab
+      const seg = route.trains[0];
+      const clsType = activeClass[`${rIdx}_0`] || seg.class_details[0]?.class_type || "SL";
+      const formattedDate = (seg.departure_date || "").replace(/-/g, "");
+      const url = `https://www.irctc.co.in/nget/booking/train-list?fromStation=${seg.from_station}&toStation=${seg.to_station}&journeyDate=${formattedDate}&classCode=${clsType}&quotaCode=GENERAL`;
+      window.open(url, "_blank");
+    } else {
+      // Connecting train: open detailed modal helper
+      setBookingRoute(route);
+      setBookingRouteIdx(rIdx);
+      setBookingModalOpen(true);
+    }
+  };
+
+  const copyToClipboard = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedText(label);
+    setTimeout(() => setCopiedText(null), 1500);
+  };
+
   useEffect(() => {
     const fetchRoutes = async () => {
       setLoading(true);
@@ -365,7 +393,7 @@ export default function Results() {
               // Calculate active cumulative total fare dynamically
               let totalRouteFare = 0;
               route.trains.forEach((seg, sIdx) => {
-                const selClass = activeClass[`${idx}_${sIdx}`] || seg.class_details[0]?.class_type;
+                const selClass = activeClass[`${idx}_${sIdx}`] || seg.class_details[0]?.class_type || "SL";
                 const clsDetail = seg.class_details.find(c => c.class_type === selClass);
                 if (clsDetail) totalRouteFare += clsDetail.fare;
               });
@@ -588,8 +616,8 @@ export default function Results() {
                   {/* IRCTC-style Train Actions row */}
                   <div className="px-5 py-3 border-t border-gray-100 dark:border-white/5 flex items-center gap-3 bg-slate-50 dark:bg-slate-950/20">
                     <button
-                      onClick={() => alert(`Booking confirmed. Total Charged: ₹${totalRouteFare}`)}
-                      className="bg-[#fb731c] hover:bg-[#e05f0d] text-white px-5 py-2 rounded-xl text-xs font-extrabold uppercase shadow cursor-pointer transition-all active:scale-95 animate-pulse"
+                      onClick={() => handleBookNow(route, idx)}
+                      className="bg-[#fb731c] hover:bg-[#e05f0d] text-white px-5 py-2 rounded-xl text-xs font-extrabold uppercase shadow cursor-pointer transition-all active:scale-95"
                     >
                       Book Now
                     </button>
@@ -613,6 +641,147 @@ export default function Results() {
         </main>
 
       </div>
+
+      {/* 3. BOOKING MODAL */}
+      {bookingModalOpen && bookingRoute && bookingRouteIdx !== null && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fadeIn">
+          <div className="bg-white dark:bg-[#131926] border border-gray-200 dark:border-white/5 w-full max-w-lg rounded-2xl overflow-hidden shadow-2xl animate-scaleUp">
+            
+            {/* Header Banner */}
+            <div className="bg-[#0f2954] dark:bg-slate-950 p-4 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">🎫</span>
+                <div>
+                  <h3 className="text-sm font-black uppercase tracking-wider leading-none">Book Connecting Route</h3>
+                  <span className="text-[9px] text-gray-300 font-bold uppercase tracking-widest">Official IRCTC Redirector</span>
+                </div>
+              </div>
+              <button 
+                onClick={() => setBookingModalOpen(false)}
+                className="text-white hover:text-orange-500 font-black text-sm p-1 rounded-full cursor-pointer hover:bg-white/5"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Content Body */}
+            <div className="p-5 space-y-4 max-h-[60vh] overflow-y-auto text-slate-800 dark:text-slate-100">
+              <div className="bg-amber-500/10 border border-amber-500/25 p-3 rounded-xl text-amber-800 dark:text-amber-400 text-[11px] font-bold space-y-1">
+                <span className="block font-black text-[12px]">⚠️ Important IRCTC Session Notice:</span>
+                <p className="font-semibold leading-relaxed">
+                  If IRCTC prompts you to log in, it will clear pre-filled routes and return you to the home search page.
+                </p>
+                <div className="pt-1.5 border-t border-amber-500/15 font-black text-[10px] uppercase text-[#0f2954] dark:text-orange-300">
+                  💡 Fix: Please log in to IRCTC first in another tab, then use the quick copy buttons below to paste values directly!
+                </div>
+              </div>
+
+              {copiedText && (
+                <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 p-2 rounded-lg text-center text-xs font-black uppercase animate-pulse">
+                  ✓ Copied {copiedText} to clipboard!
+                </div>
+              )}
+
+              <div className="space-y-3">
+                {bookingRoute.trains.map((seg, sIdx) => {
+                  const legClass = activeClass[`${bookingRouteIdx}_${sIdx}`] || seg.class_details[0]?.class_type || "SL";
+                  const formattedDate = (seg.departure_date || "").replace(/-/g, "");
+                  const url = `https://www.irctc.co.in/nget/booking/train-list?fromStation=${seg.from_station}&toStation=${seg.to_station}&journeyDate=${formattedDate}&classCode=${legClass}&quotaCode=GENERAL`;
+
+                  return (
+                    <div 
+                      key={sIdx}
+                      className="border border-gray-200 dark:border-white/5 bg-slate-50 dark:bg-slate-900/40 p-4 rounded-xl space-y-3 shadow-sm"
+                    >
+                      <div className="flex items-center justify-between border-b border-gray-200/50 dark:border-white/5 pb-2">
+                        <span className="text-xs font-black text-[#0f2954] dark:text-blue-400">
+                          LEG {sIdx + 1}: {seg.train_name} (#{seg.train_no})
+                        </span>
+                        <span className="text-[10px] bg-orange-500/10 text-orange-600 dark:text-orange-400 px-2 py-0.5 rounded font-black tracking-wider uppercase">
+                          Class: {legClass}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4 text-[10px] font-bold text-gray-600 dark:text-gray-400">
+                        <div className="space-y-1">
+                          <span className="block text-[8px] uppercase tracking-wider text-gray-400">From Station</span>
+                          <span className="text-slate-800 dark:text-slate-200 block truncate">{seg.from_station_name}</span>
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(seg.from_station, "From Station Code")}
+                            className="bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 text-[8px] font-black px-2 py-1 rounded cursor-pointer transition-colors"
+                          >
+                            Copy: {seg.from_station}
+                          </button>
+                        </div>
+                        <div className="space-y-1">
+                          <span className="block text-[8px] uppercase tracking-wider text-gray-400">To Station</span>
+                          <span className="text-slate-800 dark:text-slate-200 block truncate">{seg.to_station_name}</span>
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(seg.to_station, "To Station Code")}
+                            className="bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 text-[8px] font-black px-2 py-1 rounded cursor-pointer transition-colors"
+                          >
+                            Copy: {seg.to_station}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-2 border-t border-gray-100 dark:border-white/5 mt-2">
+                        <div className="space-y-1">
+                          <span className="block text-[8px] uppercase tracking-wider text-gray-400">Travel Date</span>
+                          <span className="text-slate-800 dark:text-slate-200 block text-[10px] font-bold">
+                            {new Date(seg.departure_date || "").toDateString()}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(seg.departure_date || "", "Travel Date")}
+                            className="bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 text-[8px] font-black px-2 py-1 rounded cursor-pointer transition-colors"
+                          >
+                            Copy Date
+                          </button>
+                        </div>
+                        
+                        <div className="flex flex-col gap-1 items-end">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const details = `From: ${seg.from_station}, To: ${seg.to_station}, Date: ${seg.departure_date}, Train: ${seg.train_no}, Class: ${legClass}`;
+                              copyToClipboard(details, "All Leg Details");
+                            }}
+                            className="text-[8px] text-gray-400 font-bold hover:underline mb-1 cursor-pointer"
+                          >
+                            Copy All Info
+                          </button>
+                          <a 
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="bg-[#fb731c] hover:bg-[#e05f0d] text-white px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider shadow cursor-pointer transition-all active:scale-95 text-center"
+                          >
+                            Book Leg {sIdx + 1} ➔
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Footer Buttons */}
+            <div className="bg-slate-50 dark:bg-slate-950 p-4 border-t border-gray-100 dark:border-white/5 flex items-center justify-end gap-3">
+              <button 
+                onClick={() => setBookingModalOpen(false)}
+                className="border border-gray-300 dark:border-white/10 hover:bg-slate-100 dark:hover:bg-white/5 text-gray-700 dark:text-gray-300 px-4 py-2 rounded-xl text-xs font-bold uppercase cursor-pointer transition-all"
+              >
+                Close
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
     </div>
   );
 }

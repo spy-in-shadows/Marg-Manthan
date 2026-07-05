@@ -175,7 +175,7 @@ export default function Home() {
 
             <div className="space-y-4">
               <h2 className="text-xl font-black text-[#0f2954] dark:text-blue-400 uppercase tracking-wide border-b border-gray-100 dark:border-white/5 pb-2 mb-4 flex items-center gap-2">
-                <span>🎫</span> Book Ticket
+                <span>🎫</span> Find Routes
               </h2>
 
               {/* Source Input */}
@@ -327,27 +327,11 @@ export default function Home() {
                   onChange={(e) => setMode(e.target.value)}
                   className="w-full bg-slate-50 dark:bg-slate-900 border border-gray-300 dark:border-white/10 px-3 py-2.5 rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:border-blue-600 focus:outline-none transition-all cursor-pointer"
                 >
-                  <option value="time">General (Fastest Time)</option>
-                  <option value="distance">Shortest Distance</option>
-                  <option value="changes">Least Changes (Fewest swaps)</option>
-                  <option value="direct">Direct Trains Only</option>
+                  <option value="time">Fastest</option>
+                  <option value="distance">Shortest</option>
+                  <option value="changes">Least Changes</option>
+                  <option value="direct">Direct Trains</option>
                 </select>
-              </div>
-
-              {/* Checkboxes */}
-              <div className="space-y-1.5 pt-2 text-[10px] text-[#213c7a] dark:text-blue-400 font-black">
-                <label className="flex items-center gap-2 cursor-pointer hover:text-orange-500 transition-colors">
-                  <input type="checkbox" defaultChecked className="accent-orange-500 cursor-pointer" />
-                  <span>Flexible With Date</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer hover:text-orange-500 transition-colors">
-                  <input type="checkbox" className="accent-orange-500 cursor-pointer" />
-                  <span>Person With Disability Concession</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer hover:text-orange-500 transition-colors">
-                  <input type="checkbox" className="accent-orange-500 cursor-pointer" />
-                  <span>Railway Pass Concession</span>
-                </label>
               </div>
             </div>
 

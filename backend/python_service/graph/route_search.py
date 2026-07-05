@@ -32,8 +32,7 @@ class RouteSearcher:
             time_str = str(time_str).strip()
             parts = time_str.split(':')
             if len(parts) >= 2:
-                hours, minutes = int(parts[0]), int(parts[1])
-                return datetime(2024, 1, 1, hours, minutes)
+                return datetime(2024, 1, 1, int(parts[0]), int(parts[1]))
         except:
             return None
         
@@ -130,22 +129,48 @@ class RouteSearcher:
         return direct_routes
     
     def find_routes_connecting(self, source: str, destination: str, mode: str, journey_date: datetime.date, deadline: Optional[datetime] = None, max_routes: int = 5) -> List[Dict]:
-        """Find connecting routes using Dijkstra's search over train legs with absolute datetimes."""
+        """Find connecting routes using A* search guided by static network topological distance heuristic."""
         if source not in self.station_index or destination not in self.station_index:
             return []
             
         # Start datetime is midnight of the journey date
         start_datetime = datetime(journey_date.year, journey_date.month, journey_date.day, 0, 0)
         
-        # Priority queue stores: (cost, counter, current_station, last_train, current_datetime, path)
+        # Precompute topological distances from destination using BFS on the undirected graph
+        dest_id = self.station_index[destination]
+        try:
+            undirected_graph = self.graph.to_undirected()
+            topological_distances = nx.single_source_shortest_path_length(undirected_graph, dest_id)
+        except Exception as e:
+            print("Failed to compute topological distances for A*:", e)
+            topological_distances = {}
+            
+        def get_heuristic(station_code: str) -> float:
+            st_id = self.station_index.get(station_code)
+            if st_id is None:
+                return 999999
+            # Estimate 120 minutes of travel time per station hop to guide Dijkstra
+            return topological_distances.get(st_id, 50) * 120
+            
+        # Priority queue stores: (priority_cost, counter, current_station, last_train, current_datetime, path, accumulated_cost)
         counter = 0
-        pq = [(0, counter, source, None, start_datetime, [])]
+        pq = [(get_heuristic(source), counter, source, None, start_datetime, [], 0)]
         
         routes = []
         pop_count = {}
+        states_expanded = 0
+        
+        # Time-Expanded State Costs map: (station, train_no, date_str) -> cost
+        best_costs = {}
         
         while pq and len(routes) < max_routes:
-            cost, _, u, last_train, current_datetime, path = heapq.heappop(pq)
+            states_expanded += 1
+            # Hard cap on state expansions to prevent CPU locking on disconnected nodes
+            if states_expanded > 20000:
+                print("Dijkstra pathfinder limit reached: 20000 states expanded. Pruning search.")
+                break
+                
+            priority_cost, _, u, last_train, current_datetime, path, cost = heapq.heappop(pq)
             
             if u == destination:
                 # Skip direct routes in connecting search
@@ -181,7 +206,7 @@ class RouteSearcher:
                     })
                 continue
                 
-            # Limit search depth / pops to keep speed high
+            # Limit search depth / pops per station to keep speed high
             pop_count[u] = pop_count.get(u, 0) + 1
             if pop_count[u] > 15:
                 continue
@@ -201,6 +226,11 @@ class RouteSearcher:
                     
                 stops = self.train_timetable[t_no]
                 stop_u = stops[idx_u]
+                
+                # Heuristic: Skip local suburban trains (starts with 9) and slow passenger trains (starts with 5/7)
+                # to prevent state-space explosion and focus solely on intercity Express/Superfast trains.
+                if not (t_no.startswith('1') or t_no.startswith('2')):
+                    continue
                 
                 # Compute absolute departure datetime at station u
                 dep_parts = stop_u['departure_time'].split(':')
@@ -243,6 +273,24 @@ class RouteSearcher:
                     if deadline and arrival_datetime > deadline:
                         continue
                         
+                    # Compute new priority cost based on mode
+                    if mode == 'time':
+                        new_cost = cost + travel_time + waiting_time + penalty
+                    elif mode == 'distance':
+                        new_cost = cost + distance
+                    elif mode == 'changes':
+                        new_cost = cost + 1
+                    else:
+                        new_cost = cost + travel_time + waiting_time + penalty
+                        
+                    # Time-Expanded State Pruning: Only prune if we found a cheaper way to reach the exact same train segment on the exact same date.
+                    arr_date_str = arrival_datetime.strftime("%Y-%m-%d")
+                    state_key = (v, t_no, arr_date_str)
+                    if new_cost >= best_costs.get(state_key, float('inf')):
+                        continue
+                        
+                    best_costs[state_key] = new_cost
+                    
                     new_leg = {
                         'train_no': int(t_no),
                         'train_name': stop_u['train_name'],
@@ -258,18 +306,11 @@ class RouteSearcher:
                         'arrival_date': arrival_datetime.strftime("%Y-%m-%d")
                     }
                     
-                    # Compute new priority cost based on mode
-                    if mode == 'time':
-                        new_cost = cost + travel_time + waiting_time + penalty
-                    elif mode == 'distance':
-                        new_cost = cost + distance
-                    elif mode == 'changes':
-                        new_cost = cost + 1
-                    else:
-                        new_cost = cost + travel_time + waiting_time + penalty
-                        
+                    # A* Priority Cost = accumulated_cost + heuristic(v)
+                    priority_cost = new_cost + get_heuristic(v)
+                    
                     counter += 1
-                    heapq.heappush(pq, (new_cost, counter, v, t_no, arrival_datetime, path + [new_leg]))
+                    heapq.heappush(pq, (priority_cost, counter, v, t_no, arrival_datetime, path + [new_leg], new_cost))
                     
         return routes
     
@@ -280,6 +321,7 @@ class RouteSearcher:
             
         import urllib.request
         import urllib.parse
+        import urllib.error
         import json
         
         url = f"https://{api_host}/api/v1/checkSeatAvailability"
@@ -293,13 +335,15 @@ class RouteSearcher:
         }
         
         try:
-            query_string = urllib.parse.urlencode(params)
+            query_string = urllib.parse.parse_qsl(urllib.parse.urlencode(params))
+            query_string = urllib.parse.urlencode(query_string)
             full_url = f"{url}?{query_string}"
             req = urllib.request.Request(full_url, headers={
                 "x-rapidapi-key": api_key,
                 "x-rapidapi-host": api_host
             })
-            with urllib.request.urlopen(req, timeout=4) as response:
+            # Strict socket timeout to ensure unresponsive API calls fall back instantly
+            with urllib.request.urlopen(req, timeout=2.5) as response:
                 if response.getcode() == 200:
                     res_data = json.loads(response.read().decode('utf-8'))
                     if res_data.get('status') == True and res_data.get('data'):
@@ -308,6 +352,11 @@ class RouteSearcher:
                         status = seat_info.get('availablity_status', 'UNKNOWN')
                         prob = seat_info.get('confirm_probability_percent', 'N/A')
                         return fare, status, prob
+        except urllib.error.HTTPError as e:
+            print(f"RapidAPI HTTP Error for Train {train_no}: {e.code} {e.reason}")
+            if e.code == 429:
+                return 0, "429", None
+            return 0, None, None
         except Exception as e:
             print(f"RapidAPI call failed for Train {train_no} {from_code}->{to_code} on {dep_date}:", e)
             
@@ -399,31 +448,52 @@ class RouteSearcher:
         # Find direct trains
         direct_routes = self.find_direct_trains(source, destination, journey_date, parsed_deadline)
         
+        # Performance Optimization: Limit direct trains to the top 5 fastest to avoid redundant API lookup overhead
+        direct_routes.sort(key=lambda r: r['total_time'])
+        direct_routes = direct_routes[:5]
+        
         if mode == 'direct':
             all_routes = direct_routes
         else:
-            # Find connecting routes
+            # Find connecting routes (limited to top 5)
             connecting_routes = self.find_routes_connecting(source, destination, mode, journey_date, parsed_deadline, max_routes=5)
             all_routes = direct_routes + connecting_routes
             
-        # Post-routing: fetch live seats & fares for all candidate routes
-        valid_routes = []
+        # Circuit Breaker state to prevent API key blocking and latency spikes
+        api_circuit_broken = False
+        leg_cache = {} # cache to prevent duplicate queries for identical segments in the same request
+        
+        # Fetch seats and fares for all legs sequentially with caching and circuit breaking
         for route in all_routes:
-            # Step 1: Query/generate class details for each leg
             for leg in route['trains']:
                 train_no = leg['train_no']
                 from_code = leg['from_station']
                 to_code = leg['to_station']
-                dep_date = leg['departure_date'] # format: YYYY-MM-DD
+                dep_date = leg['departure_date']
                 
                 supported = self.get_supported_classes(leg['train_name'])
                 primary_class = supported[0] if supported else "SL"
                 
-                # Fetch live data for the primary class (1 query per leg to respect rate limits)
-                live_fare, live_status, live_prob = self._fetch_live_seats_and_fare(
-                    train_no, from_code, to_code, dep_date, primary_class, rapidapi_key, rapidapi_host
-                )
+                cache_key = (train_no, from_code, to_code, dep_date, primary_class)
                 
+                if cache_key in leg_cache:
+                    live_fare, live_status, live_prob = leg_cache[cache_key]
+                else:
+                    if api_circuit_broken or not rapidapi_key or not rapidapi_host:
+                        live_fare, live_status, live_prob = 0, None, None
+                    else:
+                        live_fare, live_status, live_prob = self._fetch_live_seats_and_fare(
+                            train_no, from_code, to_code, dep_date, primary_class, rapidapi_key, rapidapi_host
+                        )
+                        # Check if API rate-limited us
+                        if live_status == "429":
+                            print("Circuit breaker triggered: RapidAPI rate limit hit (HTTP 429). Bypassing future API queries.")
+                            api_circuit_broken = True
+                            live_status = None
+                            
+                    leg_cache[cache_key] = (live_fare, live_status, live_prob)
+                
+                # Populate class details for all supported classes
                 class_details = []
                 for cls in supported:
                     if cls == primary_class and live_fare > 0:
@@ -442,9 +512,10 @@ class RouteSearcher:
                             "confirm_probability": prob
                         })
                 leg['class_details'] = class_details
-            
-            # Step 2: Budget filtering
-            # Discard route if the absolute cheapest combination of classes exceeds the budget
+                
+        # Post-routing filtering: Apply budget checks across all validated paths
+        valid_routes = []
+        for route in all_routes:
             if budget is not None:
                 cheapest_route_total = 0
                 for leg in route['trains']:
@@ -452,9 +523,9 @@ class RouteSearcher:
                     cheapest_route_total += cheapest_leg_fare
                     
                 if cheapest_route_total > budget:
-                    continue  # Route is unaffordable even at cheapest class combinations
+                    continue  # Discard routes that exceed budget in their cheapest configuration
                     
-                # Prune individual class choices in each leg that cannot be combined under budget
+                # Prune class options that cannot be part of any valid combined ticket under budget
                 for leg in route['trains']:
                     other_legs_cheapest = 0
                     for other_leg in route['trains']:
