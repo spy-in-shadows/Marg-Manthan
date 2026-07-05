@@ -50,7 +50,7 @@ app.get("/stations", async (req, res) => {
 
 // Route search endpoint
 app.get("/search", async (req, res) => {
-    const { source, destination, mode, date, deadline } = req.query;
+    const { source, destination, mode, date, deadline, class: travelClass, budget } = req.query;
     if (!source || !destination) {
         return res.status(400).json({ error: "Source and destination stations are required" });
     }
@@ -62,7 +62,11 @@ app.get("/search", async (req, res) => {
             destination: destination.toUpperCase().trim(),
             mode: mode || "time",
             date: date || null,
-            deadline: deadline || null
+            deadline: deadline || null,
+            class_type: travelClass || "SL",
+            budget: budget ? parseInt(budget) : null,
+            rapidapi_key: process.env.RAPIDAPI_KEY,
+            rapidapi_host: process.env.RAPIDAPI_HOST
         });
         res.json({ routes: response.data });
     } catch (err) {

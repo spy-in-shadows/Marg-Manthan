@@ -111,6 +111,8 @@ class RouteSearcher:
                             'train_name': stop_src['train_name'],
                             'from_station': source,
                             'to_station': destination,
+                            'from_station_name': stop_src['station_name'],
+                            'to_station_name': stop_dest['station_name'],
                             'departure_time': stop_src['departure_time'],
                             'arrival_time': stop_dest['arrival_time'],
                             'distance': int(distance),
@@ -246,6 +248,8 @@ class RouteSearcher:
                         'train_name': stop_u['train_name'],
                         'from_station': u,
                         'to_station': v,
+                        'from_station_name': stop_u['station_name'],
+                        'to_station_name': stop_v['station_name'],
                         'departure_time': stop_u['departure_time'],
                         'arrival_time': stop_v['arrival_time'],
                         'distance': int(distance),
@@ -269,8 +273,90 @@ class RouteSearcher:
                     
         return routes
     
-    def search(self, source: str, destination: str, mode: str = 'time', date: str = None, deadline: str = None) -> List[Dict]:
-        """Main search method that routes to appropriate algorithm, validates constraints, and sorts output."""
+    def _fetch_live_seats_and_fare(self, train_no: int, from_code: str, to_code: str, dep_date: str, class_type: str, api_key: str, api_host: str) -> Tuple[int, str, str]:
+        """Fetch seat availability and fare from irctc1.p.rapidapi.com. Returns (fare, availability_status, confirm_probability)."""
+        if not api_key or not api_host:
+            return 0, None, None
+            
+        import urllib.request
+        import urllib.parse
+        import json
+        
+        url = f"https://{api_host}/api/v1/checkSeatAvailability"
+        params = {
+            "trainNo": str(train_no),
+            "fromStationCode": from_code,
+            "toStationCode": to_code,
+            "date": dep_date,
+            "classType": class_type,
+            "quota": "GN"
+        }
+        
+        try:
+            query_string = urllib.parse.urlencode(params)
+            full_url = f"{url}?{query_string}"
+            req = urllib.request.Request(full_url, headers={
+                "x-rapidapi-key": api_key,
+                "x-rapidapi-host": api_host
+            })
+            with urllib.request.urlopen(req, timeout=4) as response:
+                if response.getcode() == 200:
+                    res_data = json.loads(response.read().decode('utf-8'))
+                    if res_data.get('status') == True and res_data.get('data'):
+                        seat_info = res_data['data'][0]
+                        fare = int(seat_info.get('total_fare', 0))
+                        status = seat_info.get('availablity_status', 'UNKNOWN')
+                        prob = seat_info.get('confirm_probability_percent', 'N/A')
+                        return fare, status, prob
+        except Exception as e:
+            print(f"RapidAPI call failed for Train {train_no} {from_code}->{to_code} on {dep_date}:", e)
+            
+        return 0, None, None
+
+    def _fallback_fare_and_seats(self, distance: int, class_type: str) -> Tuple[int, str, str]:
+        """Generate fallback synthetic fare and availability status based on class and distance."""
+        # Class rate per km
+        class_rates = {
+            "SL": 0.6,
+            "3A": 1.5,
+            "2A": 2.2,
+            "1A": 3.8,
+            "CC": 1.2,
+            "2S": 0.35
+        }
+        rate = class_rates.get(class_type, 0.6)
+        
+        # Base fare calculation
+        base_fare = int(distance * rate)
+        add_charges = {
+            "SL": 120,
+            "3A": 350,
+            "2A": 500,
+            "1A": 750,
+            "CC": 220,
+            "2S": 60
+        }
+        fare = base_fare + add_charges.get(class_type, 120)
+        
+        # Seed with a combination of distance and class_type to make it class-specific but deterministic
+        import random
+        seed_val = distance + sum(ord(c) * (i + 1) for i, c in enumerate(class_type))
+        random.seed(seed_val)
+        status_opts = [
+            ("AVAILABLE-0042", "N/A"),
+            ("AVAILABLE-0012", "N/A"),
+            ("AVAILABLE-0003", "N/A"),
+            ("GNWL25/WL12", "78"),
+            ("GNWL66/WL54", "48"),
+            ("GNWL120/WL95", "25"),
+            ("RAC 12", "95")
+        ]
+        status, prob = random.choice(status_opts)
+        
+        return fare, status, prob
+
+    def search(self, source: str, destination: str, mode: str = 'time', date: str = None, deadline: str = None, class_type: str = 'SL', budget: Optional[int] = None, rapidapi_key: Optional[str] = None, rapidapi_host: Optional[str] = None) -> List[Dict]:
+        """Main search method that routes to appropriate algorithm, validates constraints, fetches live seat/fares, and filters by budget."""
         # Default date to today if none is provided
         if not date:
             journey_date = datetime.now().date()
@@ -296,19 +382,50 @@ class RouteSearcher:
         direct_routes = self.find_direct_trains(source, destination, journey_date, parsed_deadline)
         
         if mode == 'direct':
-            return direct_routes
+            all_routes = direct_routes
+        else:
+            # Find connecting routes
+            connecting_routes = self.find_routes_connecting(source, destination, mode, journey_date, parsed_deadline, max_routes=5)
+            all_routes = direct_routes + connecting_routes
             
-        # Find connecting routes
-        connecting_routes = self.find_routes_connecting(source, destination, mode, journey_date, parsed_deadline, max_routes=5)
-        
-        all_routes = direct_routes + connecting_routes
-        
+        # Post-routing: fetch live seats & fares for all candidate routes
+        valid_routes = []
+        for route in all_routes:
+            total_fare = 0
+            for leg in route['trains']:
+                train_no = leg['train_no']
+                from_code = leg['from_station']
+                to_code = leg['to_station']
+                dep_date = leg['departure_date'] # format: YYYY-MM-DD
+                
+                # Fetch live data
+                fare, status, prob = self._fetch_live_seats_and_fare(
+                    train_no, from_code, to_code, dep_date, class_type, rapidapi_key, rapidapi_host
+                )
+                
+                # Fallback if live fetch failed/returned 0
+                if fare == 0 or status is None:
+                    fare, status, prob = self._fallback_fare_and_seats(leg['distance'], class_type)
+                    
+                leg['fare'] = fare
+                leg['availability_status'] = status
+                leg['confirm_probability'] = prob
+                total_fare += fare
+                
+            route['total_fare'] = total_fare
+            
+            # Apply budget constraint check
+            if budget is not None and total_fare > budget:
+                continue  # Discard routes that exceed budget
+                
+            valid_routes.append(route)
+            
         # Sort routes based on preference
         if mode == 'distance':
-            all_routes.sort(key=lambda r: r['total_distance'])
+            valid_routes.sort(key=lambda r: r['total_distance'])
         elif mode == 'changes':
-            all_routes.sort(key=lambda r: (r['changes'], r['total_time']))
+            valid_routes.sort(key=lambda r: (r['changes'], r['total_time']))
         else: # default/time
-            all_routes.sort(key=lambda r: r['total_time'])
+            valid_routes.sort(key=lambda r: r['total_time'])
             
-        return all_routes
+        return valid_routes

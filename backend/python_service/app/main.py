@@ -43,6 +43,10 @@ class RouteRequest(BaseModel):
     mode: str = "time"  # Options: time, distance, changes, direct
     date: Optional[str] = None
     deadline: Optional[str] = None
+    class_type: Optional[str] = "SL"
+    budget: Optional[int] = None
+    rapidapi_key: Optional[str] = None
+    rapidapi_host: Optional[str] = None
 
 
 class StationInfo(BaseModel):
@@ -61,6 +65,11 @@ class TrainSegment(BaseModel):
     travel_time: int
     departure_date: Optional[str] = None
     arrival_date: Optional[str] = None
+    fare: Optional[int] = None
+    availability_status: Optional[str] = None
+    confirm_probability: Optional[str] = None
+    from_station_name: Optional[str] = None
+    to_station_name: Optional[str] = None
 
 
 class Route(BaseModel):
@@ -70,6 +79,7 @@ class Route(BaseModel):
     total_time: int
     changes: int
     waiting_time: int
+    total_fare: Optional[int] = None
 
 
 @app.on_event("startup")
@@ -145,7 +155,17 @@ async def search_routes(request: RouteRequest):
         raise HTTPException(status_code=400, detail=f"Invalid mode. Must be one of: {valid_modes}")
     
     try:
-        routes = route_searcher.search(request.source, request.destination, request.mode, request.date, request.deadline)
+        routes = route_searcher.search(
+            request.source,
+            request.destination,
+            request.mode,
+            request.date,
+            request.deadline,
+            request.class_type,
+            request.budget,
+            request.rapidapi_key,
+            request.rapidapi_host
+        )
         return routes
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error searching routes: {str(e)}")
