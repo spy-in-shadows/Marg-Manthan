@@ -1,33 +1,31 @@
-# 🚆 Marg-Manthan
+# 🚆 Marg-Manthan: Multi-Modal Railway Transit Pathfinder
 
-> A fast and efficient railway route search engine for Indian Railways.
-
-Marg-Manthan is a railway route planning system that enables users to search for trains, explore routes between stations, and efficiently query railway timetable data. The project preprocesses raw IRCTC timetable data into optimized data structures to ensure fast and scalable route searches.
+Marg-Manthan is a high-performance, budget-aware, and deadline-constrained railway route planning system designed for Indian Railways. By pairing an **A\* Search Pathfinder** on a time-expanded topological network with a **Node.js Express Gateway** and an **IRCTC-branded React Frontend**, Marg-Manthan discovers optimal direct and connecting train itineraries under 2 seconds.
 
 ---
 
 ## ✨ Features
 
-- 🔍 Search trains between two stations
-- 🚉 View complete train routes
-- 📍 Station-wise train lookup
-- 🔄 Discover direct and connecting routes
-- ⚡ Fast query execution using preprocessed data
-- 📊 Efficient handling of large railway datasets
-- 💾 Optimized storage and indexing
+- **🔍 Direct & Connecting Searches**: Discovers paths with up to 2 transfers (3 trains total) dynamically routing across multi-day schedules.
+- **⚡ A* Pathfinder Engine**: Guided by single-source undirected topological shortest path distance heuristics to restrict expansions and return routes instantly.
+- **🕒 Temporal Connection & Deadline Constraints**: Computes layout layovers (minimum 15 mins, maximum 18 hours) across absolute datetimes and filters paths exceeding latest arrival deadlines.
+- **💰 Budget-Aware Class Pruning**: Prunes individual class ticket combinations that exceed the user's maximum budget.
+- **🚀 Concurrent API Query Engine**: Executes parallel seat availability checks (using thread pools), deduplicates segment-level queries to save API quota, and uses strict connection socket timeouts.
+- **🔌 API Circuit Breaker**: Instantly intercepts `HTTP 429` Rate Limit errors from external IRCTC RapidAPIs, falling back to deterministic synthetic generators to preserve speed.
+- **🎨 IRCTC Branding & Theme Engine**: Premium layout matching the official IRCTC portal with fully custom SVG iconography and dark/light glassmorphic styling.
+- **📋 Sequential Booking Helper**: Booking modal with clipboard-copy shortcuts for station codes and dates, preventing session and route loss on login redirects.
 
 ---
 
 ## 🛠 Tech Stack
 
 | Category | Technology |
-|----------|------------|
-| Language | Python |
-| Backend | Flask / FastAPI |
-| Data Processing | Pandas |
-| Data Storage | JSON, CSV |
-| Graph Processing | NetworkX (Optional) |
-| Frontend | HTML, CSS, JavaScript |
+|---|---|
+| **Frontend** | React 19, TypeScript, Vite, Tailwind CSS v4 |
+| **Gateway Tier** | Node.js, Express, Axios, Nodemon |
+| **Routing Tier** | Python 3.11, FastAPI, Uvicorn |
+| **Database** | PostgreSQL, Static In-Memory JSON Timetable Indexes |
+| **Graph Processing** | NetworkX, Pickle |
 
 ---
 
@@ -36,154 +34,82 @@ Marg-Manthan is a railway route planning system that enables users to search for
 ```text
 Marg-Manthan/
 │
-├── data/
-│   ├── raw/
-│   └── processed/
-│
-├── scripts/
-│   ├── preprocess.py
-│   └── build_graph.py
-│
 ├── backend/
-│   ├── api.py
-│   ├── search.py
-│   └── graph.py
+│   ├── data/                      # Station indices, names, and graph.pkl data
+│   ├── src/                       # Node.js Express Gateway (App & Controllers)
+│   ├── python_service/            # FastAPI Python Routing Service
+│   │   ├── app/                   # API entry points (main.py)
+│   │   ├── graph/                 # A* pathfinder (route_search.py)
+│   │   └── venv/                  # Python Virtual Environment
+│   └── package.json
 │
-├── frontend/
+├── frontend/                      # React Frontend Web Application (Vite)
+│   ├── src/
+│   │   ├── components/            # UI components (Emblem, Navbar, BookingModal)
+│   │   ├── pages/                 # Home, Results, TrainDetails, About
+│   │   └── index.css              # Custom themes, styling, and override utilities
+│   └── package.json
 │
-├── utils/
-│
-├── README.md
-└── requirements.txt
+└── README.md
 ```
 
 ---
 
 ## ⚙️ How It Works
 
-1. Load raw railway timetable data.
-2. Preprocess and clean the dataset.
-3. Build optimized graph and index structures.
-4. Store processed data.
-5. Accept user search queries.
-6. Return the best possible train routes.
+1. **Static Preprocessing**: During startup, the Python service loads the NetworkX database graph (`graph.pkl`) and indexes station timetables into fast lookup memory mappings.
+2. **Topological BFS**: Once a search query (Source $\rightarrow$ Destination) is received, the pathfinder runs a single-source BFS on the undirected station network to map the minimum train hops from the target station to all other nodes.
+3. **A\* Pathfinder Execution**: Dijkstra's frontier is expanded, sorted by $f(u) = g(u) + h(u)$, where $h(u) = \text{hops} \times 120\text{ minutes}$. It filters out suburban local trains (numbers starting with `9`) and slow passenger/DEMU trains (starting with `5` or `7`) to avoid local loop explosions.
+4. **Temporal Layover Validation**: The pathfinder validates connecting windows at layovers, ensuring they fall between 15 minutes and 18 hours.
+5. **Parallel Seat/Fare Querying**: Discovered routes have their unique segment availability queried in parallel. Circuit-breakers trip and use fallback generators if API limits are hit.
+6. **Budget Filtering**: Routes exceeding the total budget are pruned, and class details are updated accordingly.
 
 ---
 
-## 🧠 Algorithms Used
+## 🚀 Installation & Running
 
-- Graph Traversal
-- Breadth First Search (BFS)
-- Dijkstra's Algorithm
-- Hash Maps
-- Adjacency Lists
-- Indexed Station Lookup
-
----
-
-## 📊 Dataset
-
-The dataset contains railway timetable information including:
-
-- Train Number
-- Train Name
-- Station Code
-- Station Name
-- Arrival Time
-- Departure Time
-- Distance
-- Stop Sequence
-
----
-
-## 🚀 Installation
-
-### Clone the repository
-
+### 1. Database Setup
+Ensure PostgreSQL is running, then load the timetable database:
 ```bash
-git clone https://github.com/yourusername/Marg-Manthan.git
-cd Marg-Manthan
+createdb railway_db
+psql -d railway_db -f backend/data/railway_db.sql
 ```
 
-### Install dependencies
+### 2. Configure Environment Variables
+Create a `.env` file inside the `backend/` directory:
+```env
+PORT=3000
+DATABASE_URL=postgres://username:password@localhost:5432/railway_db
+PYTHON_SERVICE_URL=http://localhost:8000
+RAPIDAPI_KEY=your_rapidapi_key
+RAPIDAPI_HOST=irctc1.p.rapidapi.com
+```
 
+### 3. Run FastAPI Python Service
 ```bash
+cd backend/python_service
+source venv/bin/activate
 pip install -r requirements.txt
+python run_service.py
 ```
 
-### Preprocess the dataset
-
+### 4. Run Express Backend Gateway
 ```bash
-python scripts/preprocess.py
+cd backend
+npm install
+npm run dev
 ```
 
-### Start the server
-
+### 5. Run Vite React Frontend
 ```bash
-python backend/api.py
+cd frontend
+npm install
+npm run dev
 ```
-
----
-
-## 📸 Screenshots
-
-- To be updated
-
----
-
-## 🎯 Future Improvements
-
-- Live train status
-- Seat availability
-- Fare prediction
-- Delay prediction
-- Platform prediction
-- Interactive railway map
-- AI-powered route recommendations
-- Real-time train tracking
-- Multilingual support
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome!
-
-1. Fork the repository
-2. Create a feature branch
-
-```bash
-git checkout -b feature-name
-```
-
-3. Commit your changes
-
-```bash
-git commit -m "Add new feature"
-```
-
-4. Push the branch
-
-```bash
-git push origin feature-name
-```
-
-5. Open a Pull Request
+Open [http://localhost:5174](http://localhost:5174) in your browser.
 
 ---
 
 ## 📄 License
 
 This project is licensed under the MIT License.
-
----
-
-## 👨‍💻 Authors
-
-Developed as part of a Railway Route Search Engine project.
-
----
-
-## ⭐ Support
-
-If you found this project useful, consider giving it a ⭐ on GitHub!
